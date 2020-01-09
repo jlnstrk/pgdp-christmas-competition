@@ -65,7 +65,7 @@ public class Database {
                 }
             }
             System.out.println("total: " + totalQuant + ", orders: " + orders);
-            averageQuantity = totalQuant / orders;
+            averageQuantity = Math.round((double) totalQuant / orders);
         } catch (Exception e) {
             e.printStackTrace();
             // ignore
