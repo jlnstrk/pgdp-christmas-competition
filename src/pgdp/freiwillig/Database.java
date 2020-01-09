@@ -66,7 +66,6 @@ public class Database {
                     long quantity = 100 * Long.parseUnsignedLong(l3, quantityFirst, quantityLast + 1, 10);
                     orders++;
                     totalQuant += quantity;
-                    break;
                 }
             }
             averageQuantity = totalQuant / orders;
