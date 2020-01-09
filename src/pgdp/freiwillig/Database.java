@@ -10,6 +10,8 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicLong;
 
 public class Database {
     private static File TBL_CUSTOMER = null, TBL_LINE_ITEM = null, TBL_ORDERS = null;
@@ -27,9 +29,31 @@ public class Database {
     }
 
     public Database() {
-        parseCustomerData();
-        parseOrdersData();
-        parseLineItemsData();
+        ExecutorService service = Executors.newFixedThreadPool(3);
+        service.execute(new Runnable() {
+            @Override
+            public void run() {
+                parseCustomerData();
+            }
+        });
+        service.execute(new Runnable() {
+            @Override
+            public void run() {
+                parseOrdersData();
+            }
+        });
+        service.execute(new Runnable() {
+            @Override
+            public void run() {
+                parseLineItemsData();
+            }
+        });
+        try {
+            service.shutdown();
+            service.awaitTermination(10, TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
     }
 
     private void parseCustomerData() {
@@ -94,22 +118,34 @@ public class Database {
     }
 
     public long getAverageQuantityPerMarketSegment(String marketsegment) {
-        long lineItemsCount = 0;
-        long totalQuantity = 0;
+        final AtomicLong lineItemsCount = new AtomicLong();
+        final AtomicLong totalQuantity = new AtomicLong();
+        ExecutorService exec = Executors.newFixedThreadPool(8);
         Set<Long> sgmtCustomers = customers.get(marketsegment);
         for (Long custKey : sgmtCustomers) {
-            Set<Long> orderKeys = orders.get(custKey);
-            if (orderKeys != null) {
-                for (Long orderKey : orderKeys) {
-                    Set<Long> quantities = lineItems.get(orderKey);
-                    lineItemsCount += quantities.size();
-                    for (Long quantity : quantities) {
-                        totalQuantity += quantity;
+            exec.execute(new Runnable() {
+                @Override
+                public void run() {
+                    Set<Long> orderKeys = orders.get(custKey);
+                    if (orderKeys != null) {
+                        for (Long orderKey : orderKeys) {
+                            Set<Long> quantities = lineItems.get(orderKey);
+                            lineItemsCount.addAndGet(quantities.size());
+                            for (Long quantity : quantities) {
+                                totalQuantity.addAndGet(quantity);
+                            }
+                        }
                     }
                 }
-            }
+            });
         }
-        return totalQuantity / lineItemsCount;
+        try {
+            exec.shutdown();
+            exec.awaitTermination(10, TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
+        return totalQuantity.get() / lineItemsCount.get();
     }
 
     public static void main(String[] args) {
