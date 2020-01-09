@@ -10,9 +10,9 @@ import java.util.HashSet;
 import java.util.Set;
 
 public class Database {
-    private File TBL_CUSTOMER = null, TBL_LINEITEM = null, TBL_ORDERS = null;
+    private static File TBL_CUSTOMER = null, TBL_LINEITEM = null, TBL_ORDERS = null;
 
-    public void setBaseDataDirectory(Path baseDirectory) {
+    public static void setBaseDataDirectory(Path baseDirectory) {
         TBL_CUSTOMER = new File(baseDirectory.toString() +
                 File.separator + "customer.tbl");
         TBL_LINEITEM = new File(baseDirectory.toString() +
@@ -91,8 +91,8 @@ public class Database {
     }
 
     public static void main(String[] args) {
+        Database.setBaseDataDirectory(Paths.get("data"));
         Database db = new Database();
-        db.setBaseDataDirectory(Paths.get("data"));
         long before = System.nanoTime();
         db.getAverageQuantityPerMarketSegment("AUTOMOBILE");
         long after = System.nanoTime();
