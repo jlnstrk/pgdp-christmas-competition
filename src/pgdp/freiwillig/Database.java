@@ -58,12 +58,12 @@ public class Database {
             long currKey = 0;
             while ((l3 = lineItemReader.readLine()) != null) {
                 int orderKeyLast = l3.indexOf("|") - 1;
-                long orderKey = Long.parseLong(l3.substring(0, orderKeyLast + 1));
+                long orderKey = Long.parseUnsignedLong(l3, 0, orderKeyLast + 1, 10);
                 if (currKey == orderKey || orderKeys.contains(orderKey)) {
                     currKey = orderKey;
                     int quantityFirst = ordinalIndexOf(l3, "|", 4, orderKeyLast + 1) + 1;
                     int quantityLast = l3.indexOf("|", quantityFirst) - 1;
-                    long quantity = Long.parseUnsignedLong(l3, quantityFirst, quantityLast + 1, 10);
+                    long quantity = 100 * Long.parseUnsignedLong(l3, quantityFirst, quantityLast + 1, 10);
                     orders++;
                     totalQuant += quantity;
                     break;
@@ -94,10 +94,11 @@ public class Database {
         Database.setBaseDataDirectory(Paths.get("data"));
         Database db = new Database();
         long before = System.nanoTime();
-        db.getAverageQuantityPerMarketSegment("AUTOMOBILE");
+        long qt = db.getAverageQuantityPerMarketSegment("AUTOMOBILE");
         long after = System.nanoTime();
         double result = (after - before) / Math.pow(10, 6);
         System.out.println(result);
+        System.out.println(qt);
     }
 
     public static int ordinalIndexOf(String str, String substr, int n, int offset) {
