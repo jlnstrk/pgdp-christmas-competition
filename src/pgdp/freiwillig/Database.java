@@ -36,8 +36,8 @@ public class Database {
                     custKeys.add(custKey);
                 }
             }
-            Set<Long> orderKeys = new HashSet<>();
 
+            Set<Long> orderKeys = new HashSet<>();
             String l2;
             while ((l2 = ordersReader.readLine()) != null) {
                 int custKeyFirst = l2.indexOf("|") + 1;
@@ -57,15 +57,17 @@ public class Database {
                 long orderKey = Long.parseUnsignedLong(l3, 0, orderKeyLast + 1, 10);
                 if (currKey == orderKey || orderKeys.contains(orderKey)) {
                     currKey = orderKey;
-                    int quantityFirst = ordinalIndexOf(l3, "|", 4, orderKeyLast + 1) + 1;
-                    int quantityLast = l3.indexOf("|", quantityFirst) - 1;
-                    long quantity = 100 * Long.parseUnsignedLong(l3, quantityFirst, quantityLast + 1, 10);
+                    int sepFront = ordinalIndexOf(l3, "|", 4, orderKeyLast + 1);
+                    int sepBack = l3.indexOf("|", sepFront + 1);
+                    long quantity = 100 * Long.parseUnsignedLong(l3, sepFront + 1, sepBack, 10);
                     orders++;
                     totalQuant += quantity;
                 }
             }
+            System.out.println("total: " + totalQuant + ", orders: " + orders);
             averageQuantity = totalQuant / orders;
         } catch (Exception e) {
+            e.printStackTrace();
             // ignore
         } finally {
             try {
@@ -88,12 +90,22 @@ public class Database {
     public static void main(String[] args) {
         Database.setBaseDataDirectory(Paths.get("data"));
         Database db = new Database();
-        long before = System.nanoTime();
-        long qt = db.getAverageQuantityPerMarketSegment("AUTOMOBILE");
-        long after = System.nanoTime();
-        double result = (after - before) / Math.pow(10, 6);
-        System.out.println(result);
-        System.out.println(qt);
+        long[] durs = new long[5];
+        long[] quants = new long[5];
+        String[] segments = new String[]{"FURNITURE", "HOUSEHOLD", "AUTOMOBILE", "BUILDING", "MACHINERY"};
+        for (int i = 0; i < segments.length; i++) {
+            long before = System.nanoTime();
+            long qt = db.getAverageQuantityPerMarketSegment(segments[i]);
+            long after = System.nanoTime();
+            durs[i] = (long) ((after - before) / Math.pow(10, 6));
+            quants[i] = qt;
+        }
+        long totalDur = 0;
+        for (int i = 0; i < segments.length; i++) {
+            totalDur += durs[i];
+            System.out.println(segments[i] + ": average " + quants[i] + " took " + durs[i] + "ms");
+        }
+        System.out.println("total average duration: " + (totalDur / durs.length) + "ms");
     }
 
     public static int ordinalIndexOf(String str, String substr, int n, int offset) {
