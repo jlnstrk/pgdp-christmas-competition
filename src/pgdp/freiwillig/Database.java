@@ -1,19 +1,25 @@
 package pgdp.freiwillig;
 
-import java.io.*;
+import java.io.BufferedReader;
+import java.io.File;
+import java.io.FileReader;
+import java.io.IOException;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.HashSet;
 import java.util.Set;
 
 public class Database {
-    private static final Path BASE_DATA_PATH = Paths.get("data");
-    private static final File TBL_CUSTOMER = new File(BASE_DATA_PATH.toString() +
-            File.separator + "customer.tbl");
-    private static final File TBL_LINEITEM = new File(BASE_DATA_PATH.toString() +
-            File.separator + "lineitem.tbl");
-    private static final File TBL_ORDERS = new File(BASE_DATA_PATH.toString() +
-            File.separator + "orders.tbl");
+    private File TBL_CUSTOMER = null, TBL_LINEITEM = null, TBL_ORDERS = null;
+
+    public void setBaseDataDirectory(Path baseDirectory) {
+        TBL_CUSTOMER = new File(baseDirectory.toString() +
+                File.separator + "customer.tbl");
+        TBL_LINEITEM = new File(baseDirectory.toString() +
+                File.separator + "lineitem.tbl");
+        TBL_ORDERS = new File(baseDirectory.toString() +
+                File.separator + "orders.tbl");
+    }
 
     public long getAverageQuantityPerMarketSegment(String marketsegment) {
         long averageQuantity = -1;
@@ -85,8 +91,10 @@ public class Database {
     }
 
     public static void main(String[] args) {
+        Database db = new Database();
+        db.setBaseDataDirectory(Paths.get("data"));
         long before = System.nanoTime();
-        new Database().getAverageQuantityPerMarketSegment("AUTOMOBILE");
+        db.getAverageQuantityPerMarketSegment("AUTOMOBILE");
         long after = System.nanoTime();
         double result = (after - before) / Math.pow(10, 6);
         System.out.println(result);
