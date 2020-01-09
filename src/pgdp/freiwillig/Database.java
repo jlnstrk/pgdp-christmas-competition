@@ -10,12 +10,12 @@ import java.util.HashSet;
 import java.util.Set;
 
 public class Database {
-    private static File TBL_CUSTOMER = null, TBL_LINEITEM = null, TBL_ORDERS = null;
+    private static File TBL_CUSTOMER = null, TBL_LINE_ITEM = null, TBL_ORDERS = null;
 
     public static void setBaseDataDirectory(Path baseDirectory) {
         TBL_CUSTOMER = new File(baseDirectory.toString() +
                 File.separator + "customer.tbl");
-        TBL_LINEITEM = new File(baseDirectory.toString() +
+        TBL_LINE_ITEM = new File(baseDirectory.toString() +
                 File.separator + "lineitem.tbl");
         TBL_ORDERS = new File(baseDirectory.toString() +
                 File.separator + "orders.tbl");
@@ -27,15 +27,11 @@ public class Database {
         try {
             customerReader = new BufferedReader(new FileReader(TBL_CUSTOMER));
             ordersReader = new BufferedReader(new FileReader(TBL_ORDERS));
-            lineItemReader = new BufferedReader(new FileReader(TBL_LINEITEM));
+            lineItemReader = new BufferedReader(new FileReader(TBL_LINE_ITEM));
             Set<Long> custKeys = new HashSet<>();
             String l1;
             while ((l1 = customerReader.readLine()) != null) {
-                l1 = l1.substring(0, l1.length() - 2);
-                int segmentLast = l1.lastIndexOf("|") - 1;
-                int segmentFirst = l1.lastIndexOf("|", segmentLast) + 1;
-                String segment = l1.substring(segmentFirst, segmentLast + 1);
-                if (segment.equals(marketsegment)) {
+                if (l1.contains(marketsegment)) {
                     long custKey = Long.parseUnsignedLong(l1, 0, l1.indexOf("|"), 10);
                     custKeys.add(custKey);
                 }
