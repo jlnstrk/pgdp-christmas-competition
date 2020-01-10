@@ -4,12 +4,14 @@ import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileReader;
 import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.util.Map;
-import java.util.Set;
+import java.util.*;
 import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.Consumer;
 
 public class Database {
     private static File TBL_CUSTOMER = null, TBL_LINE_ITEM = null, TBL_ORDERS = null;
@@ -27,103 +29,144 @@ public class Database {
     }
 
     public Database() {
-        ForkJoinPool pool = new ForkJoinPool(3);
-        ForkJoinTask<?> customers = pool.submit(this::parseCustomerData);
-        ForkJoinTask<?> orders = pool.submit(this::parseOrdersData);
-        ForkJoinTask<?> lineItems = pool.submit(this::parseLineItemsData);
-        customers.join();
-        orders.join();
-        lineItems.join();
+        processFile(TBL_CUSTOMER, this::processCustomerLine);
+        processFile(TBL_ORDERS, this::processOrderLine);
+        processFile(TBL_LINE_ITEM, this::processLineItemLine);
     }
 
-    private void parseCustomerData() {
-        try (FileReader tblReader = new FileReader(TBL_CUSTOMER)) {
-            try (BufferedReader customerReader = new BufferedReader(tblReader)) {
-                String l1;
-                while ((l1 = customerReader.readLine()) != null) {
-                    int segmentSepEnd = l1.lastIndexOf('|', l1.length() - 2);
-                    int segmentSepStart = l1.lastIndexOf('|', segmentSepEnd - 1);
-                    long custKey = Long.parseUnsignedLong(l1, 0, l1.indexOf("|"), 10);
-                    String key = l1.substring(segmentSepStart + 1, segmentSepEnd);
-                    customers.computeIfAbsent(key, k -> ConcurrentHashMap.newKeySet())
-                            .add(custKey);
-                }
-            } catch (Exception e) {
-                e.printStackTrace();
-            }
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
-    }
-
-    private void parseOrdersData() {
-        try (FileReader tblReader = new FileReader(TBL_ORDERS)) {
+    private void processFile(File file, Consumer<String> lineProcessor) {
+        Queue<String> queue = new ConcurrentLinkedQueue<>();
+        AtomicBoolean active = new AtomicBoolean(true);
+        Future<?> task = processIndefinitely(active, queue, lineProcessor);
+        try (FileReader tblReader = new FileReader(file)) {
             try (BufferedReader ordersReader = new BufferedReader(tblReader)) {
-                String l2;
-                while ((l2 = ordersReader.readLine()) != null) {
-                    int custKeyFirst = l2.indexOf("|") + 1;
-                    int custKeyLast = l2.indexOf("|", custKeyFirst) - 1;
-                    long custKey = Long.parseUnsignedLong(l2, custKeyFirst, custKeyLast + 1, 10);
-                    long orderKey = Long.parseUnsignedLong(l2, 0, custKeyFirst - 1, 10);
-                    orders.computeIfAbsent(custKey, k -> ConcurrentHashMap.newKeySet())
-                            .add(orderKey);
+                String line;
+                while ((line = ordersReader.readLine()) != null) {
+                    queue.add(line);
                 }
             } catch (Exception e) {
                 e.printStackTrace();
             }
         } catch (IOException e) {
             e.printStackTrace();
+        } finally {
+            active.set(false);
+            try {
+                task.get();
+            } catch (InterruptedException | ExecutionException e) {
+                e.printStackTrace();
+            }
         }
     }
 
-    private void parseLineItemsData() {
-        try (FileReader tblReader = new FileReader(TBL_LINE_ITEM)) {
-            try (BufferedReader lineItemReader = new BufferedReader(tblReader)) {
-                String l3;
-                while ((l3 = lineItemReader.readLine()) != null) {
-                    int orderKeyLast = l3.indexOf("|") - 1;
-                    long orderKey = Long.parseUnsignedLong(l3, 0, orderKeyLast + 1, 10);
-                    int sepFront = ordinalIndexOf(l3, "|", 4, orderKeyLast + 1);
-                    int sepBack = l3.indexOf("|", sepFront + 1);
-                    long quantity = 100 * Long.parseUnsignedLong(l3, sepFront + 1, sepBack, 10);
-                    lineItems.computeIfAbsent(orderKey, k -> ConcurrentHashMap.newKeySet())
-                            .add(quantity);
+    private void parseLineItemsDataAlt1() {
+        try {
+            byte[] bytes = Files.readAllBytes(TBL_LINE_ITEM.toPath());
+            long orderKey = 0, quantity = 0;
+            for (int i = 0, occ = 0, prev = -2; i < bytes.length; i++) {
+                if (bytes[i] == '|') {
+                    if (occ == 0) {
+                        orderKey = parseLong(bytes, prev + 2, i - prev - 2);
+                    } else if (occ == 4) {
+                        quantity = 100 * parseLong(bytes, prev + 1, i - prev - 1);
+                        lineItems.computeIfAbsent(orderKey, k -> new HashSet<>())
+                                .add(quantity);
+                    }
+                    if (occ == 15) {
+                        occ = 0;
+                    } else occ++;
+                    prev = i;
                 }
-            } catch (Exception e) {
-                e.printStackTrace();
             }
         } catch (IOException e) {
             e.printStackTrace();
         }
     }
 
-    private void parseLineItemsDataAlternative() {
+    private void parseLineItemsDataAlt2() {
+        try {
+            Files.lines(TBL_LINE_ITEM.toPath())
+                    .forEach(l3 -> {
+                        int orderKeyLast = l3.indexOf("|") - 1;
+                        long orderKey = Long.parseUnsignedLong(l3, 0, orderKeyLast + 1, 10);
+                        int sepFront = ordinalIndexOf(l3, "|", 4, orderKeyLast + 1);
+                        int sepBack = l3.indexOf("|", sepFront + 1);
+                        long quantity = 100 * Long.parseUnsignedLong(l3, sepFront + 1, sepBack, 10);
+                        lineItems.computeIfAbsent(orderKey, k -> ConcurrentHashMap.newKeySet())
+                                .add(quantity);
+                    });
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
 
+    private void processCustomerLine(String line) {
+        int segmentSepEnd = line.lastIndexOf('|', line.length() - 2);
+        int segmentSepStart = line.lastIndexOf('|', segmentSepEnd - 1);
+        long custKey = Long.parseUnsignedLong(line, 0, line.indexOf("|"), 10);
+        String key = line.substring(segmentSepStart + 1, segmentSepEnd);
+        customers.computeIfAbsent(key, k -> ConcurrentHashMap.newKeySet())
+                .add(custKey);
+    }
+
+    private void processOrderLine(String line) {
+        int custKeyFirst = line.indexOf("|") + 1;
+        int custKeyLast = line.indexOf("|", custKeyFirst) - 1;
+        long custKey = Long.parseUnsignedLong(line, custKeyFirst, custKeyLast + 1, 10);
+        long orderKey = Long.parseUnsignedLong(line, 0, custKeyFirst - 1, 10);
+        orders.computeIfAbsent(custKey, k -> ConcurrentHashMap.newKeySet())
+                .add(orderKey);
+    }
+
+    private Future<?> processIndefinitely(AtomicBoolean cancellationSignal, Queue<String> feed, Consumer<String> processor) {
+        return ForkJoinPool.commonPool().submit(() -> {
+            while (true) {
+                String next = feed.poll();
+                if (next != null) {
+                    processor.accept(next);
+                } else if (!cancellationSignal.get()) {
+                    break;
+                }
+            }
+        });
+    }
+
+    private void processLineItemLine(String line) {
+        int orderKeyLast = line.indexOf("|") - 1;
+        long orderKey = Long.parseUnsignedLong(line, 0, orderKeyLast + 1, 10);
+        int sepFront = ordinalIndexOf(line, "|", 4, orderKeyLast + 1);
+        int sepBack = line.indexOf("|", sepFront + 1);
+        long quantity = 100 * Long.parseUnsignedLong(line, sepFront + 1, sepBack, 10);
+        lineItems.computeIfAbsent(orderKey, k -> ConcurrentHashMap.newKeySet())
+                .add(quantity);
     }
 
     public long getAverageQuantityPerMarketSegment(String marketsegment) {
         final AtomicLong lineItemsCount = new AtomicLong();
         final AtomicLong totalQuantity = new AtomicLong();
-        ExecutorService exec = Executors.newFixedThreadPool(16);
         Set<Long> sgmtCustomers = customers.get(marketsegment);
+        List<Future<?>> futures = new LinkedList<>();
         for (Long custKey : sgmtCustomers) {
-            exec.execute(() -> {
+            futures.add(ForkJoinPool.commonPool().submit(() -> {
                 Set<Long> orderKeys = orders.get(custKey);
                 if (orderKeys != null) {
                     for (Long orderKey : orderKeys) {
                         Set<Long> quantities = lineItems.get(orderKey);
-                        lineItemsCount.addAndGet(quantities.size());
-                        for (Long quantity : quantities) {
-                            totalQuantity.addAndGet(quantity);
+                        if (quantities != null) {
+                            lineItemsCount.addAndGet(quantities.size());
+                            for (Long quantity : quantities) {
+                                totalQuantity.addAndGet(quantity);
+                            }
                         }
                     }
                 }
-            });
+            }));
         }
         try {
-            exec.shutdown();
-            exec.awaitTermination(10, TimeUnit.SECONDS);
-        } catch (InterruptedException e) {
+            for (Future<?> future : futures) {
+                future.get();
+            }
+        } catch (InterruptedException | ExecutionException e) {
             e.printStackTrace();
         }
         return totalQuantity.get() / lineItemsCount.get();

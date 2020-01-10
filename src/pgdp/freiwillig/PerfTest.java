@@ -1,5 +1,10 @@
 package pgdp.freiwillig;
 
+import java.io.File;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.StringTokenizer;
 
 public class PerfTest {
@@ -14,6 +19,16 @@ public class PerfTest {
 
     public static void main(String[] args) {
         System.out.println(Database.parseLong(new byte[] { '1', '2', '3' }, 1, 2));
+
+        System.out.println(measure(() -> {
+            try {
+                Files.readAllLines(Paths.get("data/lineitem.tbl"));
+                Files.readAllLines(Paths.get("data/customer.tbl"));
+                Files.readAllLines(Paths.get("data/orders.tbl"));
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        }) / Math.pow(10, 6));
 
         long indexOf = 0, split = 0, split_limit = 0, tokenizer = 0, bytewise = 0;
         for (int i = 0; i < 1000000; i++) {
