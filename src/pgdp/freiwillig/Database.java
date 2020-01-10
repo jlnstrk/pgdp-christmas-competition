@@ -103,22 +103,25 @@ public class Database {
     }
 
     public long getAverageQuantityPerMarketSegment(String marketsegment) {
-        final AtomicLong lineItemsCount = new AtomicLong();
-        final AtomicLong totalQuantity = new AtomicLong();
+        final AtomicLong totalItems = new AtomicLong();
+        final AtomicLong totalQuant = new AtomicLong();
         Set<Long> sgmtCustomers = customers.get(marketsegment);
         List<Future<?>> futures = new LinkedList<>();
         for (Long custKey : sgmtCustomers) {
             futures.add(ForkJoinPool.commonPool().submit(() -> {
+                long accItems = 0, accQuant = 0;
                 Set<Long> orderKeys = orders.get(custKey);
                 if (orderKeys != null) {
                     for (Long orderKey : orderKeys) {
                         Set<Long> quantities = lineItems.get(orderKey);
-                        lineItemsCount.addAndGet(quantities.size());
                         for (Long quantity : quantities) {
-                            totalQuantity.addAndGet(quantity);
+                            accQuant += quantity;
+                            accItems++;
                         }
                     }
                 }
+                totalItems.addAndGet(accItems);
+                totalQuant.addAndGet(accQuant);
             }));
         }
         try {
@@ -128,7 +131,7 @@ public class Database {
         } catch (InterruptedException | ExecutionException e) {
             e.printStackTrace();
         }
-        return totalQuantity.get() / lineItemsCount.get();
+        return totalQuant.get() / totalItems.get();
     }
 
     public static void main(String[] args) {
