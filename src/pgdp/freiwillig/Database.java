@@ -2,23 +2,25 @@ package pgdp.freiwillig;
 
 import java.io.BufferedReader;
 import java.io.File;
-import java.io.FileReader;
+import java.io.FileInputStream;
 import java.io.IOException;
+import java.nio.MappedByteBuffer;
+import java.nio.channels.FileChannel;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 
 public class Database {
     private static File TBL_CUSTOMER = null, TBL_LINE_ITEM = null, TBL_ORDERS = null;
-    private Map<String, Set<Integer>> customers = new ConcurrentHashMap<>();
-    private Map<Integer, Set<Integer>> orders = new ConcurrentHashMap<>();
-    private Map<Integer, Set<Integer>> lineItems = new ConcurrentHashMap<>();
+    private Map<String, Set<Long>> customers = new ConcurrentHashMap<>();
+    private Map<Long, Set<Long>> orders = new ConcurrentHashMap<>();
+    private Map<Long, Set<Long>> lineItems = new ConcurrentHashMap<>();
 
     public static void setBaseDataDirectory(Path baseDirectory) {
         TBL_CUSTOMER = new File(baseDirectory.toString() +
@@ -39,16 +41,12 @@ public class Database {
         Queue<String> queue = new ConcurrentLinkedQueue<>();
         AtomicBoolean active = new AtomicBoolean(true);
         Future<?> task = processIndefinitely(active, queue, lineProcessor);
-        try (FileReader tblReader = new FileReader(file)) {
-            try (BufferedReader ordersReader = new BufferedReader(tblReader)) {
-                String line;
-                while ((line = ordersReader.readLine()) != null) {
-                    queue.add(line);
-                }
-            } catch (Exception e) {
-                e.printStackTrace();
+        try (BufferedReader ordersReader = Files.newBufferedReader(file.toPath())) {
+            String line;
+            while ((line = ordersReader.readLine()) != null) {
+                queue.add(line);
             }
-        } catch (IOException e) {
+        } catch (Exception e) {
             e.printStackTrace();
         } finally {
             active.set(false);
@@ -63,7 +61,7 @@ public class Database {
     private void processCustomerLine(String line) {
         int segmentSepEnd = line.lastIndexOf('|', line.length() - 2);
         int segmentSepStart = line.lastIndexOf('|', segmentSepEnd - 1);
-        Integer custKey = Integer.parseUnsignedInt(line, 0, line.indexOf("|"), 10);
+        Long custKey = Long.parseUnsignedLong(line, 0, line.indexOf("|"), 10);
         String key = line.substring(segmentSepStart + 1, segmentSepEnd);
         customers.computeIfAbsent(key, k -> ConcurrentHashMap.newKeySet())
                 .add(custKey);
@@ -72,8 +70,8 @@ public class Database {
     private void processOrderLine(String line) {
         int custKeyFirst = line.indexOf("|") + 1;
         int custKeyLast = line.indexOf("|", custKeyFirst) - 1;
-        Integer custKey = Integer.parseUnsignedInt(line, custKeyFirst, custKeyLast + 1, 10);
-        Integer orderKey = Integer.parseUnsignedInt(line, 0, custKeyFirst - 1, 10);
+        Long custKey = Long.parseUnsignedLong(line, custKeyFirst, custKeyLast + 1, 10);
+        Long orderKey = Long.parseUnsignedLong(line, 0, custKeyFirst - 1, 10);
         orders.computeIfAbsent(custKey, k -> ConcurrentHashMap.newKeySet())
                 .add(orderKey);
     }
@@ -93,10 +91,10 @@ public class Database {
 
     private void processLineItemLine(String line) {
         int orderKeyLast = line.indexOf("|") - 1;
-        Integer orderKey = Integer.parseUnsignedInt(line, 0, orderKeyLast + 1, 10);
+        Long orderKey = Long.parseUnsignedLong(line, 0, orderKeyLast + 1, 10);
         int sepFront = ordinalIndexOf(line, "|", 4, orderKeyLast + 1);
         int sepBack = line.indexOf("|", sepFront + 1);
-        Integer quantity = 100 * Integer.parseUnsignedInt(line, sepFront + 1, sepBack, 10);
+        Long quantity = 100 * Long.parseUnsignedLong(line, sepFront + 1, sepBack, 10);
         lineItems.computeIfAbsent(orderKey, k -> ConcurrentHashMap.newKeySet())
                 .add(quantity);
     }
@@ -104,17 +102,17 @@ public class Database {
     public long getAverageQuantityPerMarketSegment(String marketsegment) {
         final AtomicLong lineItemsCount = new AtomicLong();
         final AtomicLong totalQuantity = new AtomicLong();
-        Set<Integer> sgmtCustomers = customers.get(marketsegment);
+        Set<Long> sgmtCustomers = customers.get(marketsegment);
         List<Future<?>> futures = new LinkedList<>();
-        for (Integer custKey : sgmtCustomers) {
+        for (Long custKey : sgmtCustomers) {
             futures.add(ForkJoinPool.commonPool().submit(() -> {
-                Set<Integer> orderKeys = orders.get(custKey);
+                Set<Long> orderKeys = orders.get(custKey);
                 if (orderKeys != null) {
-                    for (Integer orderKey : orderKeys) {
-                        Set<Integer> quantities = lineItems.get(orderKey);
+                    for (Long orderKey : orderKeys) {
+                        Set<Long> quantities = lineItems.get(orderKey);
                         if (quantities != null) {
                             lineItemsCount.addAndGet(quantities.size());
-                            for (Integer quantity : quantities) {
+                            for (Long quantity : quantities) {
                                 totalQuantity.addAndGet(quantity);
                             }
                         }
@@ -136,8 +134,8 @@ public class Database {
         Database.setBaseDataDirectory(Paths.get("data"));
         long globalBefore = System.nanoTime();
         Database db = new Database();
-        Integer[] durs = new Integer[5];
-        Long[] quants = new Long[5];
+        int[] durs = new int[5];
+        long[] quants = new long[5];
         String[] segments = new String[]{"FURNITURE", "HOUSEHOLD", "AUTOMOBILE", "BUILDING", "MACHINERY"};
         for (int i = 0; i < segments.length; i++) {
             long before = System.nanoTime();
@@ -147,7 +145,7 @@ public class Database {
             quants[i] = qt;
         }
         long globalAfter = System.nanoTime();
-        Integer totalDur = 0;
+        long totalDur = 0;
         for (int i = 0; i < segments.length; i++) {
             totalDur += durs[i];
             System.out.println(segments[i] + ": average " + quants[i] + " took " + durs[i] + "ms");

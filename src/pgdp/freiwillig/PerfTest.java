@@ -1,9 +1,14 @@
 package pgdp.freiwillig;
 
+import java.io.FileInputStream;
 import java.io.IOException;
-import java.nio.file.Files;
+import java.nio.ByteBuffer;
+import java.nio.MappedByteBuffer;
+import java.nio.channels.FileChannel;
+import java.nio.charset.Charset;
 import java.nio.file.Paths;
-import java.util.StringTokenizer;
+import java.util.*;
+import java.util.concurrent.*;
 
 public class PerfTest {
     private static final String PERF_SAMPLE = "4|88035|5560|1|30|30690.90|0.03|0.08|N|O|1996-01-10|1995-12-14|1996-01-18|DELIVER IN PERSON|REG AIR|- quickly regular packages sleep. idly|";
@@ -16,15 +21,35 @@ public class PerfTest {
     }
 
     public static void main(String[] args) {
-        System.out.println(Database.parseInt(new byte[] { '1', '2', '3' }, 1, 2));
+        System.out.println(Database.parseInt(new byte[]{'1', '2', '3'}, 1, 2));
 
         System.out.println(measure(() -> {
-            try {
-                Files.readAllLines(Paths.get("data/lineitem.tbl"));
-                Files.readAllLines(Paths.get("data/customer.tbl"));
-                Files.readAllLines(Paths.get("data/orders.tbl"));
+            ExecutorService service = Executors.newFixedThreadPool(Runtime.getRuntime().availableProcessors() * 2);
+            byte[] all = null;
+            try (FileChannel channel = new FileInputStream(Paths.get("data/lineitem.tbl").toString()).getChannel()) {
+                MappedByteBuffer buffer = channel.map(FileChannel.MapMode.READ_ONLY, 0, channel.size());
+                all = new byte[buffer.limit()];
+                int opSize = 1 << 19;
+                int opCount = buffer.limit() / opSize;
+                for (int i = 0, off = 0; i < opCount; i++, off += opSize) {
+                    int fOff = off;
+                    byte[] finalAll = all;
+                    service.execute(() -> {
+                        ByteBuffer view = buffer.slice(fOff, opSize);
+                        view.get(finalAll, fOff, opSize);
+                    });
+                }
             } catch (IOException e) {
                 e.printStackTrace();
+            } finally {
+                service.shutdown();
+                try {
+                    service.awaitTermination(10, TimeUnit.SECONDS);
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                }
+                Map<Long, Set<Long>> lineItems = new HashMap<>();
+
             }
         }) / Math.pow(10, 6));
 
