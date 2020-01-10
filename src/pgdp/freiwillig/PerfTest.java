@@ -56,7 +56,7 @@ public class PerfTest {
             indexOf += measure(() -> {
                 int orderKeyLast = PERF_SAMPLE.indexOf("|") - 1;
                 long orderKey = Long.parseUnsignedLong(PERF_SAMPLE, 0, orderKeyLast + 1, 10);
-                int sepFront = Database.ordinalIndexOf(PERF_SAMPLE, "|", 4, orderKeyLast + 1);
+                int sepFront = Database.ordinalIndexOf(PERF_SAMPLE, '|', 4, orderKeyLast + 1);
                 int sepBack = PERF_SAMPLE.indexOf("|", sepFront + 1);
                 long quantity = 100 * Long.parseUnsignedLong(PERF_SAMPLE, sepFront + 1, sepBack, 10);
             });

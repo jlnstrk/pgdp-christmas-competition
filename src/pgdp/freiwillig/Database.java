@@ -1,11 +1,13 @@
 package pgdp.freiwillig;
 
+import java.awt.*;
 import java.io.BufferedReader;
 import java.io.File;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.*;
+import java.util.List;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ForkJoinPool;
@@ -30,12 +32,19 @@ public class Database {
     }
 
     public Database() {
-        processFile(TBL_CUSTOMER, this::processCustomerLine);
-        processFile(TBL_ORDERS, this::processOrderLine);
-        processFile(TBL_LINE_ITEM, this::processLineItemLine);
+        Future<?> p1 = processFile(TBL_CUSTOMER, this::processCustomerLine);
+        Future<?> p2 = processFile(TBL_ORDERS, this::processOrderLine);
+        Future<?> p3 = processFile(TBL_LINE_ITEM, this::processLineItemLine);
+        try {
+            p1.get();
+            p2.get();
+            p3.get();
+        } catch (InterruptedException | ExecutionException e) {
+            e.printStackTrace();
+        }
     }
 
-    private void processFile(File file, Consumer<String> lineProcessor) {
+    private Future<?> processFile(File file, Consumer<String> lineProcessor) {
         Queue<String> queue = new ConcurrentLinkedQueue<>();
         AtomicBoolean active = new AtomicBoolean(true);
         Future<?> task = processIndefinitely(active, queue, lineProcessor);
@@ -48,26 +57,22 @@ public class Database {
             e.printStackTrace();
         } finally {
             active.set(false);
-            try {
-                task.get();
-            } catch (InterruptedException | ExecutionException e) {
-                e.printStackTrace();
-            }
         }
+        return task;
     }
 
     private void processCustomerLine(String line) {
         int segmentSepEnd = line.lastIndexOf('|', line.length() - 2);
         int segmentSepStart = line.lastIndexOf('|', segmentSepEnd - 1);
-        long custKey = Long.parseUnsignedLong(line, 0, line.indexOf("|"), 10);
+        long custKey = Long.parseUnsignedLong(line, 0, line.indexOf('|'), 10);
         String key = line.substring(segmentSepStart + 1, segmentSepEnd);
         customers.computeIfAbsent(key, k -> new HashSet<>())
                 .add(custKey);
     }
 
     private void processOrderLine(String line) {
-        int custKeyFirst = line.indexOf("|") + 1;
-        int custKeyLast = line.indexOf("|", custKeyFirst) - 1;
+        int custKeyFirst = line.indexOf('|') + 1;
+        int custKeyLast = line.indexOf('|', custKeyFirst) - 1;
         long custKey = Long.parseUnsignedLong(line, custKeyFirst, custKeyLast + 1, 10);
         long orderKey = Long.parseUnsignedLong(line, 0, custKeyFirst - 1, 10);
         orders.computeIfAbsent(custKey, k -> new HashSet<>())
@@ -88,10 +93,10 @@ public class Database {
     }
 
     private void processLineItemLine(String line) {
-        int orderKeyLast = line.indexOf("|") - 1;
+        int orderKeyLast = line.indexOf('|') - 1;
         long orderKey = Long.parseUnsignedLong(line, 0, orderKeyLast + 1, 10);
-        int sepFront = ordinalIndexOf(line, "|", 4, orderKeyLast + 1);
-        int sepBack = line.indexOf("|", sepFront + 1);
+        int sepFront = ordinalIndexOf(line, '|', 4, orderKeyLast + 1);
+        int sepBack = line.indexOf('|', sepFront + 1);
         long quantity = 100 * Long.parseUnsignedLong(line, sepFront + 1, sepBack, 10);
         lineItems.computeIfAbsent(orderKey, k -> new HashSet<>())
                 .add(quantity);
@@ -150,7 +155,7 @@ public class Database {
         System.out.println("total average duration: " + (totalDur / durs.length) + "ms");
     }
 
-    public static int ordinalIndexOf(String str, String substr, int n, int offset) {
+    public static int ordinalIndexOf(String str, char substr, int n, int offset) {
         int pos = str.indexOf(substr, offset);
         while (--n > 0 && pos != -1)
             pos = str.indexOf(substr, pos + 1);
