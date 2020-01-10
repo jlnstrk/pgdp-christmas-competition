@@ -2,8 +2,6 @@ package pgdp.freiwillig;
 
 import java.io.FileInputStream;
 import java.io.IOException;
-import java.nio.ByteBuffer;
-import java.nio.MappedByteBuffer;
 import java.nio.channels.FileChannel;
 import java.nio.charset.Charset;
 import java.nio.file.Paths;
@@ -23,7 +21,7 @@ public class PerfTest {
     public static void main(String[] args) {
         System.out.println(Database.parseInt(new byte[]{'1', '2', '3'}, 1, 2));
 
-        System.out.println(measure(() -> {
+        /*System.out.println(measure(() -> {
             ExecutorService service = Executors.newFixedThreadPool(Runtime.getRuntime().availableProcessors() * 2);
             byte[] all = null;
             try (FileChannel channel = new FileInputStream(Paths.get("data/lineitem.tbl").toString()).getChannel()) {
@@ -51,7 +49,7 @@ public class PerfTest {
                 Map<Long, Set<Long>> lineItems = new HashMap<>();
 
             }
-        }) / Math.pow(10, 6));
+        }) / Math.pow(10, 6));*/
 
         long indexOf = 0, split = 0, split_limit = 0, tokenizer = 0, bytewise = 0;
         for (int i = 0; i < 1000000; i++) {

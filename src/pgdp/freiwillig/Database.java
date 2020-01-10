@@ -2,25 +2,23 @@ package pgdp.freiwillig;
 
 import java.io.BufferedReader;
 import java.io.File;
-import java.io.FileInputStream;
-import java.io.IOException;
-import java.nio.MappedByteBuffer;
-import java.nio.channels.FileChannel;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.*;
-import java.util.concurrent.*;
+import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ForkJoinPool;
+import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 
 public class Database {
     private static File TBL_CUSTOMER = null, TBL_LINE_ITEM = null, TBL_ORDERS = null;
-    private Map<String, Set<Long>> customers = new ConcurrentHashMap<>();
-    private Map<Long, Set<Long>> orders = new ConcurrentHashMap<>();
-    private Map<Long, Set<Long>> lineItems = new ConcurrentHashMap<>();
+    private Map<String, Set<Long>> customers = new HashMap<>();
+    private Map<Long, Set<Long>> orders = new HashMap<>();
+    private Map<Long, Set<Long>> lineItems = new HashMap<>();
 
     public static void setBaseDataDirectory(Path baseDirectory) {
         TBL_CUSTOMER = new File(baseDirectory.toString() +
@@ -61,18 +59,18 @@ public class Database {
     private void processCustomerLine(String line) {
         int segmentSepEnd = line.lastIndexOf('|', line.length() - 2);
         int segmentSepStart = line.lastIndexOf('|', segmentSepEnd - 1);
-        Long custKey = Long.parseUnsignedLong(line, 0, line.indexOf("|"), 10);
+        long custKey = Long.parseUnsignedLong(line, 0, line.indexOf("|"), 10);
         String key = line.substring(segmentSepStart + 1, segmentSepEnd);
-        customers.computeIfAbsent(key, k -> ConcurrentHashMap.newKeySet())
+        customers.computeIfAbsent(key, k -> new HashSet<>())
                 .add(custKey);
     }
 
     private void processOrderLine(String line) {
         int custKeyFirst = line.indexOf("|") + 1;
         int custKeyLast = line.indexOf("|", custKeyFirst) - 1;
-        Long custKey = Long.parseUnsignedLong(line, custKeyFirst, custKeyLast + 1, 10);
-        Long orderKey = Long.parseUnsignedLong(line, 0, custKeyFirst - 1, 10);
-        orders.computeIfAbsent(custKey, k -> ConcurrentHashMap.newKeySet())
+        long custKey = Long.parseUnsignedLong(line, custKeyFirst, custKeyLast + 1, 10);
+        long orderKey = Long.parseUnsignedLong(line, 0, custKeyFirst - 1, 10);
+        orders.computeIfAbsent(custKey, k -> new HashSet<>())
                 .add(orderKey);
     }
 
@@ -91,11 +89,11 @@ public class Database {
 
     private void processLineItemLine(String line) {
         int orderKeyLast = line.indexOf("|") - 1;
-        Long orderKey = Long.parseUnsignedLong(line, 0, orderKeyLast + 1, 10);
+        long orderKey = Long.parseUnsignedLong(line, 0, orderKeyLast + 1, 10);
         int sepFront = ordinalIndexOf(line, "|", 4, orderKeyLast + 1);
         int sepBack = line.indexOf("|", sepFront + 1);
-        Long quantity = 100 * Long.parseUnsignedLong(line, sepFront + 1, sepBack, 10);
-        lineItems.computeIfAbsent(orderKey, k -> ConcurrentHashMap.newKeySet())
+        long quantity = 100 * Long.parseUnsignedLong(line, sepFront + 1, sepBack, 10);
+        lineItems.computeIfAbsent(orderKey, k -> new HashSet<>())
                 .add(quantity);
     }
 
@@ -110,11 +108,9 @@ public class Database {
                 if (orderKeys != null) {
                     for (Long orderKey : orderKeys) {
                         Set<Long> quantities = lineItems.get(orderKey);
-                        if (quantities != null) {
-                            lineItemsCount.addAndGet(quantities.size());
-                            for (Long quantity : quantities) {
-                                totalQuantity.addAndGet(quantity);
-                            }
+                        lineItemsCount.addAndGet(quantities.size());
+                        for (Long quantity : quantities) {
+                            totalQuantity.addAndGet(quantity);
                         }
                     }
                 }
