@@ -10,14 +10,15 @@ import java.nio.file.Paths;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 
 public class Database {
     private static File TBL_CUSTOMER = null, TBL_LINE_ITEM = null, TBL_ORDERS = null;
-    private Map<String, Set<Long>> customers = new ConcurrentHashMap<>();
-    private Map<Long, Set<Long>> orders = new ConcurrentHashMap<>();
-    private Map<Long, Set<Long>> lineItems = new ConcurrentHashMap<>();
+    private Map<String, Set<Integer>> customers = new ConcurrentHashMap<>();
+    private Map<Integer, Set<Integer>> orders = new ConcurrentHashMap<>();
+    private Map<Integer, Set<Integer>> lineItems = new ConcurrentHashMap<>();
 
     public static void setBaseDataDirectory(Path baseDirectory) {
         TBL_CUSTOMER = new File(baseDirectory.toString() +
@@ -59,51 +60,10 @@ public class Database {
         }
     }
 
-    private void parseLineItemsDataAlt1() {
-        try {
-            byte[] bytes = Files.readAllBytes(TBL_LINE_ITEM.toPath());
-            long orderKey = 0, quantity = 0;
-            for (int i = 0, occ = 0, prev = -2; i < bytes.length; i++) {
-                if (bytes[i] == '|') {
-                    if (occ == 0) {
-                        orderKey = parseLong(bytes, prev + 2, i - prev - 2);
-                    } else if (occ == 4) {
-                        quantity = 100 * parseLong(bytes, prev + 1, i - prev - 1);
-                        lineItems.computeIfAbsent(orderKey, k -> new HashSet<>())
-                                .add(quantity);
-                    }
-                    if (occ == 15) {
-                        occ = 0;
-                    } else occ++;
-                    prev = i;
-                }
-            }
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
-    }
-
-    private void parseLineItemsDataAlt2() {
-        try {
-            Files.lines(TBL_LINE_ITEM.toPath())
-                    .forEach(l3 -> {
-                        int orderKeyLast = l3.indexOf("|") - 1;
-                        long orderKey = Long.parseUnsignedLong(l3, 0, orderKeyLast + 1, 10);
-                        int sepFront = ordinalIndexOf(l3, "|", 4, orderKeyLast + 1);
-                        int sepBack = l3.indexOf("|", sepFront + 1);
-                        long quantity = 100 * Long.parseUnsignedLong(l3, sepFront + 1, sepBack, 10);
-                        lineItems.computeIfAbsent(orderKey, k -> ConcurrentHashMap.newKeySet())
-                                .add(quantity);
-                    });
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
-    }
-
     private void processCustomerLine(String line) {
         int segmentSepEnd = line.lastIndexOf('|', line.length() - 2);
         int segmentSepStart = line.lastIndexOf('|', segmentSepEnd - 1);
-        long custKey = Long.parseUnsignedLong(line, 0, line.indexOf("|"), 10);
+        Integer custKey = Integer.parseUnsignedInt(line, 0, line.indexOf("|"), 10);
         String key = line.substring(segmentSepStart + 1, segmentSepEnd);
         customers.computeIfAbsent(key, k -> ConcurrentHashMap.newKeySet())
                 .add(custKey);
@@ -112,8 +72,8 @@ public class Database {
     private void processOrderLine(String line) {
         int custKeyFirst = line.indexOf("|") + 1;
         int custKeyLast = line.indexOf("|", custKeyFirst) - 1;
-        long custKey = Long.parseUnsignedLong(line, custKeyFirst, custKeyLast + 1, 10);
-        long orderKey = Long.parseUnsignedLong(line, 0, custKeyFirst - 1, 10);
+        Integer custKey = Integer.parseUnsignedInt(line, custKeyFirst, custKeyLast + 1, 10);
+        Integer orderKey = Integer.parseUnsignedInt(line, 0, custKeyFirst - 1, 10);
         orders.computeIfAbsent(custKey, k -> ConcurrentHashMap.newKeySet())
                 .add(orderKey);
     }
@@ -133,10 +93,10 @@ public class Database {
 
     private void processLineItemLine(String line) {
         int orderKeyLast = line.indexOf("|") - 1;
-        long orderKey = Long.parseUnsignedLong(line, 0, orderKeyLast + 1, 10);
+        Integer orderKey = Integer.parseUnsignedInt(line, 0, orderKeyLast + 1, 10);
         int sepFront = ordinalIndexOf(line, "|", 4, orderKeyLast + 1);
         int sepBack = line.indexOf("|", sepFront + 1);
-        long quantity = 100 * Long.parseUnsignedLong(line, sepFront + 1, sepBack, 10);
+        Integer quantity = 100 * Integer.parseUnsignedInt(line, sepFront + 1, sepBack, 10);
         lineItems.computeIfAbsent(orderKey, k -> ConcurrentHashMap.newKeySet())
                 .add(quantity);
     }
@@ -144,17 +104,17 @@ public class Database {
     public long getAverageQuantityPerMarketSegment(String marketsegment) {
         final AtomicLong lineItemsCount = new AtomicLong();
         final AtomicLong totalQuantity = new AtomicLong();
-        Set<Long> sgmtCustomers = customers.get(marketsegment);
+        Set<Integer> sgmtCustomers = customers.get(marketsegment);
         List<Future<?>> futures = new LinkedList<>();
-        for (Long custKey : sgmtCustomers) {
+        for (Integer custKey : sgmtCustomers) {
             futures.add(ForkJoinPool.commonPool().submit(() -> {
-                Set<Long> orderKeys = orders.get(custKey);
+                Set<Integer> orderKeys = orders.get(custKey);
                 if (orderKeys != null) {
-                    for (Long orderKey : orderKeys) {
-                        Set<Long> quantities = lineItems.get(orderKey);
+                    for (Integer orderKey : orderKeys) {
+                        Set<Integer> quantities = lineItems.get(orderKey);
                         if (quantities != null) {
                             lineItemsCount.addAndGet(quantities.size());
-                            for (Long quantity : quantities) {
+                            for (Integer quantity : quantities) {
                                 totalQuantity.addAndGet(quantity);
                             }
                         }
@@ -176,18 +136,18 @@ public class Database {
         Database.setBaseDataDirectory(Paths.get("data"));
         long globalBefore = System.nanoTime();
         Database db = new Database();
-        long[] durs = new long[5];
-        long[] quants = new long[5];
+        Integer[] durs = new Integer[5];
+        Long[] quants = new Long[5];
         String[] segments = new String[]{"FURNITURE", "HOUSEHOLD", "AUTOMOBILE", "BUILDING", "MACHINERY"};
         for (int i = 0; i < segments.length; i++) {
             long before = System.nanoTime();
             long qt = db.getAverageQuantityPerMarketSegment(segments[i]);
             long after = System.nanoTime();
-            durs[i] = (long) ((after - before) / Math.pow(10, 6));
+            durs[i] = (int) ((after - before) / Math.pow(10, 6));
             quants[i] = qt;
         }
         long globalAfter = System.nanoTime();
-        long totalDur = 0;
+        Integer totalDur = 0;
         for (int i = 0; i < segments.length; i++) {
             totalDur += durs[i];
             System.out.println(segments[i] + ": average " + quants[i] + " took " + durs[i] + "ms");
@@ -203,8 +163,8 @@ public class Database {
         return pos;
     }
 
-    public static long parseLong(byte[] from, int begin, int length) {
-        long value = 0;
+    public static int parseInt(byte[] from, int begin, int length) {
+        int value = 0;
         for (int i = begin + length - 1, pos = 1; i >= begin; i--, pos *= 10) {
             value += (from[i] ^ 0x30) * pos;
         }

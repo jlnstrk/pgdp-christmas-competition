@@ -1,9 +1,7 @@
 package pgdp.freiwillig;
 
-import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
-import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.StringTokenizer;
 
@@ -18,7 +16,7 @@ public class PerfTest {
     }
 
     public static void main(String[] args) {
-        System.out.println(Database.parseLong(new byte[] { '1', '2', '3' }, 1, 2));
+        System.out.println(Database.parseInt(new byte[] { '1', '2', '3' }, 1, 2));
 
         System.out.println(measure(() -> {
             try {
