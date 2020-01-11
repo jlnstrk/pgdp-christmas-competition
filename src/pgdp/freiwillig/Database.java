@@ -128,13 +128,13 @@ public class Database {
         final AtomicLong lineItemsCount = new AtomicLong();
         final AtomicLong totalQuantity = new AtomicLong();
         Collection<Integer> customers = this.customers.get(marketsegment.hashCode());
-        List<Future<?>> futures = new LinkedList<>();
+        List<ForkJoinTask<?>> tasks = new LinkedList<>();
         for (Integer customerKey : customers) {
-            futures.add(ForkJoinPool.commonPool().submit(() -> {
+            tasks.add(ForkJoinPool.commonPool().submit(() -> {
                 Collection<Integer> orders = this.orders.get(customerKey);
                 if (orders != null) {
                     for (Integer orderKey : orders) {
-                        long[] quantities = (long[]) lineItems.get(orderKey);
+                        long[] quantities = lineItems.get(orderKey);
                         if (quantities != null) {
                             lineItemsCount.addAndGet(quantities[0]);
                             totalQuantity.addAndGet(quantities[1]);
@@ -143,12 +143,8 @@ public class Database {
                 }
             }));
         }
-        try {
-            for (Future<?> future : futures) {
-                future.get();
-            }
-        } catch (InterruptedException | ExecutionException e) {
-            e.printStackTrace();
+        for (ForkJoinTask<?> task : tasks) {
+            task.join();
         }
         long lineItemsCount_ = lineItemsCount.get();
         if (lineItemsCount_ == 0) {
