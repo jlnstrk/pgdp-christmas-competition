@@ -1,26 +1,27 @@
 package pgdp.freiwillig;
 
-import java.awt.*;
-import java.io.BufferedReader;
 import java.io.File;
-import java.nio.file.Files;
+import java.io.FileInputStream;
+import java.io.IOException;
+import java.nio.MappedByteBuffer;
+import java.nio.channels.FileChannel;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.*;
-import java.util.List;
-import java.util.concurrent.ConcurrentLinkedQueue;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.ForkJoinPool;
-import java.util.concurrent.Future;
-import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.function.Consumer;
 
 public class Database {
+    private static final int CPU_COUNT = Runtime.getRuntime().availableProcessors();
     private static File TBL_CUSTOMER = null, TBL_LINE_ITEM = null, TBL_ORDERS = null;
-    private Map<String, Set<Long>> customers = new HashMap<>();
-    private Map<Long, Set<Long>> orders = new HashMap<>();
-    private Map<Long, Set<Long>> lineItems = new HashMap<>();
+    private Map<Integer, Collection<Integer>> customers = new ConcurrentHashMap<>();
+    private Map<Integer, Collection<Integer>> orders = new ConcurrentHashMap<>();
+    private Map<Integer, long[]> lineItems = new ConcurrentHashMap<>();
+    private final ExecutorService startupExecutor = Executors.newFixedThreadPool(CPU_COUNT);
+
+    interface ChunkProcessor {
+        void process(byte[] src, int offset, int limit);
+    }
 
     public static void setBaseDataDirectory(Path baseDirectory) {
         TBL_CUSTOMER = new File(baseDirectory.toString() +
@@ -32,96 +33,107 @@ public class Database {
     }
 
     public Database() {
-        Future<?> p1 = processFile(TBL_CUSTOMER, this::processCustomerLine);
-        Future<?> p2 = processFile(TBL_ORDERS, this::processOrderLine);
-        Future<?> p3 = processFile(TBL_LINE_ITEM, this::processLineItemLine);
+        processFile(TBL_LINE_ITEM, this::processLineItemChunk);
+        processFile(TBL_ORDERS, this::processOrderData);
+        processFile(TBL_CUSTOMER, this::processCustomerData);
+        startupExecutor.shutdown();
         try {
-            p1.get();
-            p2.get();
-            p3.get();
-        } catch (InterruptedException | ExecutionException e) {
+            startupExecutor.awaitTermination(5, TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
             e.printStackTrace();
         }
     }
 
-    private Future<?> processFile(File file, Consumer<String> lineProcessor) {
-        Queue<String> queue = new ConcurrentLinkedQueue<>();
-        AtomicBoolean active = new AtomicBoolean(true);
-        Future<?> task = processIndefinitely(active, queue, lineProcessor);
-        try (BufferedReader ordersReader = Files.newBufferedReader(file.toPath())) {
-            String line;
-            while ((line = ordersReader.readLine()) != null) {
-                queue.add(line);
+    private void processFile(File file, ChunkProcessor processor) {
+        try (FileChannel channel = new FileInputStream(file.getPath()).getChannel()) {
+            MappedByteBuffer buffer = channel.map(FileChannel.MapMode.READ_ONLY, 0, channel.size());
+            int opSize = buffer.limit() / CPU_COUNT;
+            byte[] buf = new byte[buffer.limit()];
+            while (buffer.hasRemaining()) {
+                int position = buffer.position();
+                buffer.get(buf, position, Math.min(buffer.remaining(), opSize));
+                startupExecutor.execute(() -> {
+                    int limit = position + opSize;
+                    processor.process(buf, position, Math.min(limit, buf.length));
+                });
             }
-        } catch (Exception e) {
+        } catch (IOException e) {
             e.printStackTrace();
-        } finally {
-            active.set(false);
         }
-        return task;
     }
 
-    private void processCustomerLine(String line) {
-        int segmentSepEnd = line.lastIndexOf('|', line.length() - 2);
-        int segmentSepStart = line.lastIndexOf('|', segmentSepEnd - 1);
-        long custKey = Long.parseUnsignedLong(line, 0, line.indexOf('|'), 10);
-        String key = line.substring(segmentSepStart + 1, segmentSepEnd);
-        customers.computeIfAbsent(key, k -> new HashSet<>())
-                .add(custKey);
-    }
-
-    private void processOrderLine(String line) {
-        int custKeyFirst = line.indexOf('|') + 1;
-        int custKeyLast = line.indexOf('|', custKeyFirst) - 1;
-        long custKey = Long.parseUnsignedLong(line, custKeyFirst, custKeyLast + 1, 10);
-        long orderKey = Long.parseUnsignedLong(line, 0, custKeyFirst - 1, 10);
-        orders.computeIfAbsent(custKey, k -> new HashSet<>())
-                .add(orderKey);
-    }
-
-    private Future<?> processIndefinitely(AtomicBoolean cancellationSignal, Queue<String> feed, Consumer<String> processor) {
-        return ForkJoinPool.commonPool().submit(() -> {
-            while (true) {
-                String next = feed.poll();
-                if (next != null) {
-                    processor.accept(next);
-                } else if (!cancellationSignal.get()) {
+    private void processCustomerData(byte[] src, int offset, int limit) {
+        for (; offset < limit; offset++) {
+            byte b = src[offset];
+            if (b == '\n') {
+                int postCustKey = byteArrayIndexOf(src, (byte) '|', offset + 1);
+                if (postCustKey == -1) {
                     break;
                 }
+                int custKey = parseInt(src, offset + 1, postCustKey - offset - 1);
+                int preSegment = byteArrayOrdinalIndexOf(src, (byte) '|', postCustKey + 1, 4);
+                int postSegment = byteArrayIndexOf(src, (byte) '|', preSegment + 1);
+                int segment = binaryStringHashCode(src, preSegment + 1, postSegment - preSegment - 1);
+                customers.computeIfAbsent(segment, k -> new ConcurrentLinkedDeque<>())
+                        .add(custKey);
+                offset = postSegment + 1;
             }
-        });
+        }
     }
 
-    private void processLineItemLine(String line) {
-        int orderKeyLast = line.indexOf('|') - 1;
-        long orderKey = Long.parseUnsignedLong(line, 0, orderKeyLast + 1, 10);
-        int sepFront = ordinalIndexOf(line, '|', 4, orderKeyLast + 1);
-        int sepBack = line.indexOf('|', sepFront + 1);
-        long quantity = 100 * Long.parseUnsignedLong(line, sepFront + 1, sepBack, 10);
-        lineItems.computeIfAbsent(orderKey, k -> new HashSet<>())
-                .add(quantity);
+    private void processOrderData(byte[] src, int offset, int limit) {
+        for (; offset < limit; offset++) {
+            byte b = src[offset];
+            if (b == '\n') {
+                int postOrderKey = byteArrayIndexOf(src, (byte) '|', offset + 1);
+                if (postOrderKey == -1) {
+                    break;
+                }
+                int orderKey = parseInt(src, offset + 1, postOrderKey - offset - 1);
+                int postCustKey = byteArrayIndexOf(src, (byte) '|', postOrderKey + 1);
+                int custKey = parseInt(src, postOrderKey + 1, postCustKey - postOrderKey - 1);
+                orders.computeIfAbsent(custKey, k -> Collections.synchronizedCollection(new ArrayDeque<>()))
+                        .add(orderKey);
+                offset = postCustKey + 1;
+            }
+        }
+    }
+
+    private void processLineItemChunk(byte[] src, int offset, int limit) {
+        for (; offset < limit; offset++) {
+            byte b = src[offset];
+            if (b == '\n') {
+                int postOrderKey = byteArrayIndexOf(src, (byte) '|', offset + 1);
+                if (postOrderKey == -1) {
+                    break;
+                }
+                int orderKey = parseInt(src, offset + 1, postOrderKey - offset - 1);
+                int sepPreQuantity = byteArrayOrdinalIndexOf(src, (byte) '|', postOrderKey + 1, 2);
+                int sepPostQuantity = byteArrayIndexOf(src, (byte) '|', sepPreQuantity + 1);
+                int quantity = 100 * parseInt(src, sepPreQuantity + 1, sepPostQuantity - sepPreQuantity - 1);
+                long[] mem = lineItems.computeIfAbsent(orderKey, k -> new long[2]);
+                mem[0] = mem[0] + 1;
+                mem[1] = mem[1] + quantity;
+                offset = sepPostQuantity + 1;
+            }
+        }
     }
 
     public long getAverageQuantityPerMarketSegment(String marketsegment) {
-        final AtomicLong totalItems = new AtomicLong();
-        final AtomicLong totalQuant = new AtomicLong();
-        Set<Long> sgmtCustomers = customers.get(marketsegment);
+        final AtomicLong lineItemsCount = new AtomicLong();
+        final AtomicLong totalQuantity = new AtomicLong();
+        Collection<Integer> customers = this.customers.get(marketsegment.hashCode());
         List<Future<?>> futures = new LinkedList<>();
-        for (Long custKey : sgmtCustomers) {
+        for (Integer customerKey : customers) {
             futures.add(ForkJoinPool.commonPool().submit(() -> {
-                long accItems = 0, accQuant = 0;
-                Set<Long> orderKeys = orders.get(custKey);
-                if (orderKeys != null) {
-                    for (Long orderKey : orderKeys) {
-                        Set<Long> quantities = lineItems.get(orderKey);
-                        for (Long quantity : quantities) {
-                            accQuant += quantity;
-                            accItems++;
-                        }
+                Collection<Integer> orders = this.orders.get(customerKey);
+                if (orders != null) {
+                    for (Integer orderKey : orders) {
+                        long[] quantities = lineItems.get(orderKey);
+                        lineItemsCount.addAndGet(quantities[0]);
+                        totalQuantity.addAndGet(quantities[1]);
                     }
                 }
-                totalItems.addAndGet(accItems);
-                totalQuant.addAndGet(accQuant);
             }));
         }
         try {
@@ -131,46 +143,84 @@ public class Database {
         } catch (InterruptedException | ExecutionException e) {
             e.printStackTrace();
         }
-        return totalQuant.get() / totalItems.get();
+        return totalQuantity.get() / lineItemsCount.get();
     }
 
     public static void main(String[] args) {
         Database.setBaseDataDirectory(Paths.get("data"));
-        long globalBefore = System.nanoTime();
-        Database db = new Database();
-        int[] durs = new int[5];
+        int runs = Integer.parseInt(args[0]);
         long[] quants = new long[5];
         String[] segments = new String[]{"FURNITURE", "HOUSEHOLD", "AUTOMOBILE", "BUILDING", "MACHINERY"};
-        for (int i = 0; i < segments.length; i++) {
-            long before = System.nanoTime();
-            long qt = db.getAverageQuantityPerMarketSegment(segments[i]);
-            long after = System.nanoTime();
-            durs[i] = (int) ((after - before) / Math.pow(10, 6));
-            quants[i] = qt;
+        double globalDuration = 0;
+        for (int i = 0; i < runs; i++) {
+            long preRun = System.nanoTime();
+            Database db = new Database();
+            for (int j = 0; j < segments.length; j++) {
+                quants[j] = db.getAverageQuantityPerMarketSegment(segments[j]);
+            }
+            long postRun = System.nanoTime();
+            double runDurationMs = (postRun - preRun) / Math.pow(10, 6);
+            globalDuration += runDurationMs;
+            System.out.println("run " + (i + 1) + ": " + String.format("%.2f", runDurationMs) + " ms");
         }
-        long globalAfter = System.nanoTime();
-        long totalDur = 0;
-        for (int i = 0; i < segments.length; i++) {
-            totalDur += durs[i];
-            System.out.println(segments[i] + ": average " + quants[i] + " took " + durs[i] + "ms");
+        for (int i = 0; i < quants.length; i++) {
+            System.out.println("segment " + segments[i] + ": " + quants[i] + " avg");
         }
-        System.out.println("total duration: " + (globalAfter - globalBefore) / Math.pow(10, 6));
-        System.out.println("total average duration: " + (totalDur / durs.length) + "ms");
+        System.out.printf(runs + " run(s) in: %.2f ms avg", globalDuration / runs);
     }
 
-    public static int ordinalIndexOf(String str, char substr, int n, int offset) {
-        int pos = str.indexOf(substr, offset);
-        while (--n > 0 && pos != -1)
-            pos = str.indexOf(substr, pos + 1);
-        return pos;
-    }
-
-    public static int parseInt(byte[] from, int begin, int length) {
+    public static int parseInt(byte[] src, int offset, int length) {
         int value = 0;
-        for (int i = begin + length - 1, pos = 1; i >= begin; i--, pos *= 10) {
-            value += (from[i] ^ 0x30) * pos;
+        length = offset + length - 1;
+        for (int place = 1; length >= offset; length--, place *= 10) {
+            value += (src[length] ^ 0x30) * place;
         }
         return value;
+    }
+
+    public static int byteArrayOrdinalIndexOf(byte[] src, byte of, int offset, int n) {
+        int length = src.length;
+        for (; offset < length; offset++) {
+            byte b = src[offset];
+            if (b == of) {
+                if (n == 0) {
+                    return offset;
+                } else n--;
+            }
+        }
+        return -1;
+    }
+
+    public static int byteArrayOrdinalLastIndexOf(byte[] src, byte of, int offset, int n) {
+        for (; offset >= 0; offset--) {
+            byte b = src[offset];
+            if (b == of) {
+                if (n == 0) {
+                    return offset;
+                } else n--;
+            }
+        }
+        return -1;
+    }
+
+    public static int byteArrayIndexOf(byte[] src, byte of, int offset) {
+        int length = src.length;
+        for (; offset < length; offset++) {
+            byte b = src[offset];
+            if (b == of) {
+                return offset;
+            }
+        }
+        return -1;
+    }
+
+    public static int binaryStringHashCode(byte[] src, int offset, int length) {
+        int h = 0;
+        int max = length + offset;
+        for (; offset < max; offset++) {
+            h = 31 * h + src[offset];
+        }
+        return h;
     }
 
 }
