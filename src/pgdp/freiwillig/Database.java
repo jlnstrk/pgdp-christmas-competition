@@ -10,14 +10,13 @@ import java.nio.file.Paths;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.stream.Collectors;
 
 public class Database {
     private int CPU_COUNT = 2;
     private static File TBL_CUSTOMER = null, TBL_LINE_ITEM = null, TBL_ORDERS = null;
-    private Map<Integer, Collection<Integer>> customers = new ConcurrentHashMap<>();
-    private Map<Integer, Collection<Integer>> orders = new ConcurrentHashMap<>();
-    private Map<Integer, long[]> lineItems = new ConcurrentHashMap<>();
+    Map<Integer, Collection<Integer>> customers = new ConcurrentHashMap<>();
+    Map<Integer, Collection<Integer>> orders = new ConcurrentHashMap<>();
+    Map<Integer, long[]> lineItems = new ConcurrentHashMap<>();
     private final ExecutorService startupExecutor = Executors.newFixedThreadPool(CPU_COUNT);
 
     interface ChunkProcessor {
@@ -67,12 +66,12 @@ public class Database {
     private void processCustomerData(byte[] src, int offset, int limit) {
         for (; offset < limit; offset++) {
             byte b = src[offset];
-            if (b == '\n') {
+            if (b == '\n' || offset == 0) {
                 int postCustKey = byteArrayIndexOf(src, (byte) '|', offset + 1);
                 if (postCustKey == -1) {
                     break;
                 }
-                int custKey = parseInt(src, offset + 1, postCustKey - offset - 1);
+                int custKey = parseInt(src, offset + (offset == 0 ? 0 : 1), postCustKey - offset - (offset == 0 ? 0 : 1));
                 int preSegment = byteArrayOrdinalIndexOf(src, (byte) '|', postCustKey + 1, 4);
                 int postSegment = byteArrayIndexOf(src, (byte) '|', preSegment + 1);
                 int segment = binaryStringHashCode(src, preSegment + 1, postSegment - preSegment - 1);
@@ -86,12 +85,12 @@ public class Database {
     private void processOrderData(byte[] src, int offset, int limit) {
         for (; offset < limit; offset++) {
             byte b = src[offset];
-            if (b == '\n') {
+            if (b == '\n' || offset == 0) {
                 int postOrderKey = byteArrayIndexOf(src, (byte) '|', offset + 1);
                 if (postOrderKey == -1) {
                     break;
                 }
-                int orderKey = parseInt(src, offset + 1, postOrderKey - offset - 1);
+                int orderKey = parseInt(src, offset + (offset == 0 ? 0 : 1), postOrderKey - offset - (offset == 0 ? 0 : 1));
                 int postCustKey = byteArrayIndexOf(src, (byte) '|', postOrderKey + 1);
                 int custKey = parseInt(src, postOrderKey + 1, postCustKey - postOrderKey - 1);
                 orders.computeIfAbsent(custKey, k -> Collections.synchronizedCollection(new ArrayDeque<>()))
@@ -104,12 +103,12 @@ public class Database {
     private void processLineItemChunk(byte[] src, int offset, int limit) {
         for (; offset < limit; offset++) {
             byte b = src[offset];
-            if (b == '\n') {
+            if (b == '\n' || offset == 0) {
                 int postOrderKey = byteArrayIndexOf(src, (byte) '|', offset + 1);
                 if (postOrderKey == -1) {
                     break;
                 }
-                int orderKey = parseInt(src, offset + 1, postOrderKey - offset - 1);
+                int orderKey = parseInt(src, offset + (offset == 0 ? 0 : 1), postOrderKey - offset - (offset == 0 ? 0 : 1));
                 int sepPreQuantity = byteArrayOrdinalIndexOf(src, (byte) '|', postOrderKey + 1, 2);
                 int sepPostQuantity = byteArrayIndexOf(src, (byte) '|', sepPreQuantity + 1);
                 int quantity = 100 * parseInt(src, sepPreQuantity + 1, sepPostQuantity - sepPreQuantity - 1);
@@ -147,10 +146,7 @@ public class Database {
         }
         long lineItemsCount_ = lineItemsCount.get();
         if (lineItemsCount_ == 0) {
-            return Long.parseLong(marketsegment.chars()
-                    .mapToObj(String::valueOf)
-                    .map(s -> (String) s)
-                    .collect(Collectors.joining("0")));
+            return -1;
         }
         return totalQuantity.get() / lineItemsCount_;
     }
