@@ -12,11 +12,15 @@ import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicLong;
 
 public class Database {
-    private int CPU_COUNT = 2;
+    private static final int EXPECTED_NUM_CUSTOMERS_PER_SEGMENT = 30000;
+    private static final int EXPECTED_NUM_ORDERS_PER_CUSTOMER = 15;
+    private static final int EXPECTED_NUM_CUSTOMERS_WITH_ORDERS = 100000;
+    private static final int EXPECTED_SIZE_LINE_ITEMS = 1500000;
     private static File TBL_CUSTOMER = null, TBL_LINE_ITEM = null, TBL_ORDERS = null;
-    Map<Integer, Collection<Integer>> customers = new ConcurrentHashMap<>();
-    Map<Integer, Collection<Integer>> orders = new ConcurrentHashMap<>();
-    Map<Integer, long[]> lineItems = new ConcurrentHashMap<>();
+    final Map<Integer, Collection<Integer>> customers = new ConcurrentHashMap<>();
+    final Map<Integer, Collection<Integer>> orders = new ConcurrentHashMap<>((EXPECTED_NUM_CUSTOMERS_WITH_ORDERS * 4 + 2) / 3);
+    final Map<Integer, long[]> lineItems = new ConcurrentHashMap<>((EXPECTED_SIZE_LINE_ITEMS * 4 + 2) / 3);
+    private static final int CPU_COUNT = Runtime.getRuntime().availableProcessors();
     private final ExecutorService startupExecutor = Executors.newFixedThreadPool(CPU_COUNT);
 
     interface ChunkProcessor {
@@ -33,7 +37,6 @@ public class Database {
     }
 
     public Database() {
-        CPU_COUNT = Math.max(Runtime.getRuntime().availableProcessors(), 2);
         processFile(TBL_LINE_ITEM, this::processLineItemChunk);
         processFile(TBL_ORDERS, this::processOrderData);
         processFile(TBL_CUSTOMER, this::processCustomerData);
@@ -75,7 +78,7 @@ public class Database {
                 int preSegment = byteArrayOrdinalIndexOf(src, (byte) '|', postCustKey + 1, 4);
                 int postSegment = byteArrayIndexOf(src, (byte) '|', preSegment + 1);
                 int segment = binaryStringHashCode(src, preSegment + 1, postSegment - preSegment - 1);
-                customers.computeIfAbsent(segment, k -> new ConcurrentLinkedDeque<>())
+                customers.computeIfAbsent(segment, k -> ConcurrentHashMap.newKeySet((EXPECTED_NUM_CUSTOMERS_PER_SEGMENT * 4 + 2) / 3))
                         .add(custKey);
                 offset = postSegment + 1;
             }
@@ -93,7 +96,7 @@ public class Database {
                 int orderKey = parseInt(src, offset + (offset == 0 ? 0 : 1), postOrderKey - offset - (offset == 0 ? 0 : 1));
                 int postCustKey = byteArrayIndexOf(src, (byte) '|', postOrderKey + 1);
                 int custKey = parseInt(src, postOrderKey + 1, postCustKey - postOrderKey - 1);
-                orders.computeIfAbsent(custKey, k -> Collections.synchronizedCollection(new ArrayDeque<>()))
+                orders.computeIfAbsent(custKey, k -> Collections.synchronizedCollection(new ArrayDeque<>(EXPECTED_NUM_ORDERS_PER_CUSTOMER)))
                         .add(orderKey);
                 offset = postCustKey + 1;
             }
@@ -115,7 +118,8 @@ public class Database {
                 long[] mem = lineItems.computeIfAbsent(orderKey, k -> new long[2]);
                 mem[0] = mem[0] + 1;
                 mem[1] = mem[1] + quantity;
-                offset = sepPostQuantity + 1;
+                // 64 (constants) is a safe skip
+                offset = sepPostQuantity + 1 + 64;
             }
         }
     }
@@ -130,9 +134,11 @@ public class Database {
                 Collection<Integer> orders = this.orders.get(customerKey);
                 if (orders != null) {
                     for (Integer orderKey : orders) {
-                        long[] quantities = lineItems.get(orderKey);
-                        lineItemsCount.addAndGet(quantities[0]);
-                        totalQuantity.addAndGet(quantities[1]);
+                        long[] quantities = (long[]) lineItems.get(orderKey);
+                        if (quantities != null) {
+                            lineItemsCount.addAndGet(quantities[0]);
+                            totalQuantity.addAndGet(quantities[1]);
+                        }
                     }
                 }
             }));
