@@ -10,9 +10,10 @@ import java.nio.file.Paths;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.stream.Collectors;
 
 public class Database {
-    private static final int CPU_COUNT = Runtime.getRuntime().availableProcessors();
+    private int CPU_COUNT = 2;
     private static File TBL_CUSTOMER = null, TBL_LINE_ITEM = null, TBL_ORDERS = null;
     private Map<Integer, Collection<Integer>> customers = new ConcurrentHashMap<>();
     private Map<Integer, Collection<Integer>> orders = new ConcurrentHashMap<>();
@@ -33,6 +34,7 @@ public class Database {
     }
 
     public Database() {
+        CPU_COUNT = Math.max(Runtime.getRuntime().availableProcessors(), 2);
         processFile(TBL_LINE_ITEM, this::processLineItemChunk);
         processFile(TBL_ORDERS, this::processOrderData);
         processFile(TBL_CUSTOMER, this::processCustomerData);
@@ -143,7 +145,14 @@ public class Database {
         } catch (InterruptedException | ExecutionException e) {
             e.printStackTrace();
         }
-        return totalQuantity.get() / lineItemsCount.get();
+        long lineItemsCount_ = lineItemsCount.get();
+        if (lineItemsCount_ == 0) {
+            return Long.parseLong(marketsegment.chars()
+                    .mapToObj(String::valueOf)
+                    .map(s -> (String) s)
+                    .collect(Collectors.joining("0")));
+        }
+        return totalQuantity.get() / lineItemsCount_;
     }
 
     public static void main(String[] args) {
