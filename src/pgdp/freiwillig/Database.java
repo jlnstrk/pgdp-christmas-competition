@@ -17,7 +17,7 @@ public class Database {
     private static final int EXPECTED_NUM_CUSTOMERS_WITH_ORDERS = 100000;
     private static final int EXPECTED_SIZE_LINE_ITEMS = 1500000;
     private static File TBL_CUSTOMER = null, TBL_LINE_ITEM = null, TBL_ORDERS = null;
-    final Map<Integer, Collection<Integer>> customers = new ConcurrentHashMap<>();
+    final Map<Integer, Collection<Integer>> customers = new ConcurrentHashMap<>(5);
     final Map<Integer, Collection<Integer>> orders = new ConcurrentHashMap<>((EXPECTED_NUM_CUSTOMERS_WITH_ORDERS * 4 + 2) / 3);
     final Map<Integer, long[]> lineItems = new ConcurrentHashMap<>((EXPECTED_SIZE_LINE_ITEMS * 4 + 2) / 3);
     private static final int CPU_COUNT = Runtime.getRuntime().availableProcessors();
@@ -94,7 +94,7 @@ public class Database {
                     customers.put(segment, set);
                 }
                 set.add(custKey);
-                offset = postSegment + 32;
+                offset = postSegment + 16;
             }
         }
     }
@@ -114,7 +114,7 @@ public class Database {
                     orders.put(custKey, deque);
                 }
                 deque.add(orderKey);
-                offset = postCustKey + 32;
+                offset = postCustKey + 16;
             }
         }
     }
