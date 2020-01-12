@@ -49,29 +49,33 @@ public class Database {
     }
 
     private void processFile(File file, ChunkProcessor processor) {
-        try (FileChannel channel = new FileInputStream(file.getPath()).getChannel()) {
-            int limit = 0;
-            try {
-                limit = (int) channel.size();
-            } catch (IOException e) {
-                e.printStackTrace();
-            }
-            int opSize = limit / CPU_COUNT;
-            byte[] src = new byte[limit];
-            for (int offset = 0; offset < limit; offset += opSize) {
-                int stepSize = Math.min(opSize, limit - offset);
+        try (FileInputStream inputStream = new FileInputStream(file.getPath())) {
+            try (FileChannel channel = inputStream.getChannel()) {
+                int limit = 0;
                 try {
-                    MappedByteBuffer buffer = channel.map(FileChannel.MapMode.READ_ONLY, offset, stepSize);
-                    int finalOffset = offset;
-                    startupExecutor.execute(() -> {
-                        if (buffer != null) {
-                            buffer.get(src, finalOffset, buffer.limit());
-                        }
-                        processor.process(src, finalOffset, finalOffset + stepSize);
-                    });
+                    limit = (int) channel.size();
                 } catch (IOException e) {
                     e.printStackTrace();
                 }
+                int opSize = limit / CPU_COUNT;
+                byte[] src = new byte[limit];
+                for (int offset = 0; offset < limit; offset += opSize) {
+                    int stepSize = Math.min(opSize, limit - offset);
+                    try {
+                        MappedByteBuffer buffer = channel.map(FileChannel.MapMode.READ_ONLY, offset, stepSize);
+                        int finalOffset = offset;
+                        startupExecutor.execute(() -> {
+                            if (buffer != null) {
+                                buffer.get(src, finalOffset, buffer.limit());
+                            }
+                            processor.process(src, finalOffset, finalOffset + stepSize);
+                        });
+                    } catch (IOException e) {
+                        e.printStackTrace();
+                    }
+                }
+            } catch (IOException e) {
+                e.printStackTrace();
             }
         } catch (IOException e) {
             e.printStackTrace();
@@ -147,47 +151,26 @@ public class Database {
         final AtomicLong totalQuantity = new AtomicLong();
         Collection<Integer> customers = this.customers.get(marketsegment.hashCode());
         List<ForkJoinTask<?>> tasks = new LinkedList<>();
-        for (Integer customerKey : customers) {
-            tasks.add(ForkJoinPool.commonPool().submit(() -> {
-                Collection<Integer> orders = this.orders.get(customerKey);
-                if (orders != null) {
-                    for (Integer orderKey : orders) {
-                        long[] quantities = lineItems.get(orderKey);
-                        if (quantities != null) {
-                            lineItemsCount.addAndGet(quantities[0]);
-                            totalQuantity.addAndGet(quantities[1]);
+        if (customers != null) {
+            for (Integer customerKey : customers) {
+                tasks.add(ForkJoinPool.commonPool().submit(() -> {
+                    Collection<Integer> orders = this.orders.get(customerKey);
+                    if (orders != null) {
+                        for (Integer orderKey : orders) {
+                            long[] quantities = lineItems.get(orderKey);
+                            if (quantities != null) {
+                                lineItemsCount.addAndGet(quantities[0]);
+                                totalQuantity.addAndGet(quantities[1]);
+                            }
                         }
                     }
-                }
-            }));
+                }));
+            }
         }
         for (ForkJoinTask<?> task : tasks) task.join();
         long lineItemsCount_ = lineItemsCount.get();
         if (lineItemsCount_ == 0) return -1;
         return totalQuantity.get() / lineItemsCount_;
-    }
-
-    public static void main(String[] args) {
-        Database.setBaseDataDirectory(Paths.get("data"));
-        int runs = Integer.parseInt(args[0]);
-        long[] quants = new long[5];
-        String[] segments = new String[]{"FURNITURE", "HOUSEHOLD", "AUTOMOBILE", "BUILDING", "MACHINERY"};
-        double globalDuration = 0;
-        for (int i = 0; i < runs; i++) {
-            long preRun = System.nanoTime();
-            Database db = new Database();
-            for (int j = 0; j < segments.length; j++) {
-                quants[j] = db.getAverageQuantityPerMarketSegment(segments[j]);
-            }
-            long postRun = System.nanoTime();
-            double runDurationMs = (postRun - preRun) / Math.pow(10, 6);
-            globalDuration += runDurationMs;
-            System.out.println("run " + (i + 1) + ": " + String.format("%.2f", runDurationMs) + " ms");
-        }
-        for (int i = 0; i < quants.length; i++) {
-            System.out.println("segment " + segments[i] + ": " + quants[i] + " avg");
-        }
-        System.out.printf(runs + " run(s) in: %.2f ms avg", globalDuration / runs);
     }
 
     public static int parseInt(byte[] src, int offset, int length) {
@@ -202,18 +185,6 @@ public class Database {
     public static int byteArrayOrdinalIndexOf(byte[] src, byte of, int offset, int n) {
         int length = src.length;
         for (; offset < length; offset++) {
-            byte b = src[offset];
-            if (b == of) {
-                if (n == 0) {
-                    return offset;
-                } else n--;
-            }
-        }
-        return -1;
-    }
-
-    public static int byteArrayOrdinalLastIndexOf(byte[] src, byte of, int offset, int n) {
-        for (; offset >= 0; offset--) {
             byte b = src[offset];
             if (b == of) {
                 if (n == 0) {
