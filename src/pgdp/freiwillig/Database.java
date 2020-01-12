@@ -50,16 +50,28 @@ public class Database {
 
     private void processFile(File file, ChunkProcessor processor) {
         try (FileChannel channel = new FileInputStream(file.getPath()).getChannel()) {
-            MappedByteBuffer buffer = channel.map(FileChannel.MapMode.READ_ONLY, 0, channel.size());
-            int opSize = buffer.limit() / CPU_COUNT;
-            byte[] buf = new byte[buffer.limit()];
-            while (buffer.hasRemaining()) {
-                int position = buffer.position();
-                buffer.get(buf, position, Math.min(buffer.remaining(), opSize));
-                startupExecutor.execute(() -> {
-                    int limit = position + opSize;
-                    processor.process(buf, position, Math.min(limit, buf.length));
-                });
+            int limit = 0;
+            try {
+                limit = (int) channel.size();
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+            int opSize = limit / CPU_COUNT;
+            byte[] src = new byte[limit];
+            for (int offset = 0; offset < limit; offset += opSize) {
+                int stepSize = Math.min(opSize, limit - offset);
+                int finalOffset = offset;
+                try {
+                    MappedByteBuffer buffer = channel.map(FileChannel.MapMode.READ_ONLY, finalOffset, stepSize);
+                    startupExecutor.execute(() -> {
+                        if (buffer != null) {
+                            buffer.get(src, finalOffset, buffer.limit());
+                        }
+                        processor.process(src, finalOffset, finalOffset + stepSize);
+                    });
+                } catch (IOException e) {
+                    e.printStackTrace();
+                }
             }
         } catch (IOException e) {
             e.printStackTrace();
@@ -71,16 +83,18 @@ public class Database {
             byte b = src[offset];
             if (b == '\n' || offset == 0) {
                 int postCustKey = byteArrayIndexOf(src, (byte) '|', offset + 1);
-                if (postCustKey == -1) {
-                    break;
-                }
+                if (postCustKey == -1) break;
                 int custKey = parseInt(src, offset + (offset == 0 ? 0 : 1), postCustKey - offset - (offset == 0 ? 0 : 1));
                 int preSegment = byteArrayOrdinalIndexOf(src, (byte) '|', postCustKey + 1, 4);
                 int postSegment = byteArrayIndexOf(src, (byte) '|', preSegment + 1);
-                int segment = binaryStringHashCode(src, preSegment + 1, postSegment - preSegment - 1);
-                customers.computeIfAbsent(segment, k -> ConcurrentHashMap.newKeySet((EXPECTED_NUM_CUSTOMERS_PER_SEGMENT * 4 + 2) / 3))
-                        .add(custKey);
-                offset = postSegment + 1;
+                Integer segment = binaryStringHashCode(src, preSegment + 1, postSegment - preSegment - 1);
+                Collection<Integer> set;
+                if ((set = customers.get(segment)) == null) {
+                    set = ConcurrentHashMap.newKeySet((EXPECTED_NUM_CUSTOMERS_PER_SEGMENT * 4 + 2) / 3);
+                    customers.put(segment, set);
+                }
+                set.add(custKey);
+                offset = postSegment + 48;
             }
         }
     }
@@ -90,15 +104,17 @@ public class Database {
             byte b = src[offset];
             if (b == '\n' || offset == 0) {
                 int postOrderKey = byteArrayIndexOf(src, (byte) '|', offset + 1);
-                if (postOrderKey == -1) {
-                    break;
-                }
+                if (postOrderKey == -1) break;
                 int orderKey = parseInt(src, offset + (offset == 0 ? 0 : 1), postOrderKey - offset - (offset == 0 ? 0 : 1));
                 int postCustKey = byteArrayIndexOf(src, (byte) '|', postOrderKey + 1);
-                int custKey = parseInt(src, postOrderKey + 1, postCustKey - postOrderKey - 1);
-                orders.computeIfAbsent(custKey, k -> Collections.synchronizedCollection(new ArrayDeque<>(EXPECTED_NUM_ORDERS_PER_CUSTOMER)))
-                        .add(orderKey);
-                offset = postCustKey + 1;
+                Integer custKey = parseInt(src, postOrderKey + 1, postCustKey - postOrderKey - 1);
+                Collection<Integer> deque;
+                if ((deque = orders.get(custKey)) == null) {
+                    deque = Collections.synchronizedCollection(new ArrayDeque<>(EXPECTED_NUM_ORDERS_PER_CUSTOMER));
+                    orders.put(custKey, deque);
+                }
+                deque.add(orderKey);
+                offset = postCustKey + 48;
             }
         }
     }
@@ -108,14 +124,16 @@ public class Database {
             byte b = src[offset];
             if (b == '\n' || offset == 0) {
                 int postOrderKey = byteArrayIndexOf(src, (byte) '|', offset + 1);
-                if (postOrderKey == -1) {
-                    break;
-                }
-                int orderKey = parseInt(src, offset + (offset == 0 ? 0 : 1), postOrderKey - offset - (offset == 0 ? 0 : 1));
+                if (postOrderKey == -1) break;
+                Integer orderKey = parseInt(src, offset + (offset == 0 ? 0 : 1), postOrderKey - offset - (offset == 0 ? 0 : 1));
                 int sepPreQuantity = byteArrayOrdinalIndexOf(src, (byte) '|', postOrderKey + 1, 2);
                 int sepPostQuantity = byteArrayIndexOf(src, (byte) '|', sepPreQuantity + 1);
                 int quantity = 100 * parseInt(src, sepPreQuantity + 1, sepPostQuantity - sepPreQuantity - 1);
-                long[] mem = lineItems.computeIfAbsent(orderKey, k -> new long[2]);
+                long[] mem;
+                if ((mem = lineItems.get(orderKey)) == null) {
+                    mem = new long[2];
+                    lineItems.put(orderKey, mem);
+                }
                 mem[0] = mem[0] + 1;
                 mem[1] = mem[1] + quantity;
                 // 64 (constants) is a safe skip
