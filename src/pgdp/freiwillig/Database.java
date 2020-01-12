@@ -60,9 +60,9 @@ public class Database {
             byte[] src = new byte[limit];
             for (int offset = 0; offset < limit; offset += opSize) {
                 int stepSize = Math.min(opSize, limit - offset);
-                int finalOffset = offset;
                 try {
-                    MappedByteBuffer buffer = channel.map(FileChannel.MapMode.READ_ONLY, finalOffset, stepSize);
+                    MappedByteBuffer buffer = channel.map(FileChannel.MapMode.READ_ONLY, offset, stepSize);
+                    int finalOffset = offset;
                     startupExecutor.execute(() -> {
                         if (buffer != null) {
                             buffer.get(src, finalOffset, buffer.limit());
@@ -94,7 +94,7 @@ public class Database {
                     customers.put(segment, set);
                 }
                 set.add(custKey);
-                offset = postSegment + 48;
+                offset = postSegment + 32;
             }
         }
     }
@@ -114,7 +114,7 @@ public class Database {
                     orders.put(custKey, deque);
                 }
                 deque.add(orderKey);
-                offset = postCustKey + 48;
+                offset = postCustKey + 32;
             }
         }
     }
