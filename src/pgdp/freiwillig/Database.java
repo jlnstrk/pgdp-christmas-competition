@@ -37,9 +37,9 @@ public class Database {
     }
 
     public Database() {
-        processFile(TBL_LINE_ITEM, this::processLineItemChunk);
-        processFile(TBL_ORDERS, this::processOrderData);
         processFile(TBL_CUSTOMER, this::processCustomerData);
+        processFile(TBL_ORDERS, this::processOrderData);
+        processFile(TBL_LINE_ITEM, this::processLineItemChunk);
         startupExecutor.shutdown();
         try {
             startupExecutor.awaitTermination(5, TimeUnit.SECONDS);
@@ -161,13 +161,9 @@ public class Database {
                 }
             }));
         }
-        for (ForkJoinTask<?> task : tasks) {
-            task.join();
-        }
+        for (ForkJoinTask<?> task : tasks) task.join();
         long lineItemsCount_ = lineItemsCount.get();
-        if (lineItemsCount_ == 0) {
-            return -1;
-        }
+        if (lineItemsCount_ == 0) return -1;
         return totalQuantity.get() / lineItemsCount_;
     }
 
