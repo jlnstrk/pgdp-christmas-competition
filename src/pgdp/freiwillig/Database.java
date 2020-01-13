@@ -6,7 +6,6 @@ import java.io.IOException;
 import java.nio.MappedByteBuffer;
 import java.nio.channels.FileChannel;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicLong;
@@ -37,9 +36,9 @@ public class Database {
     }
 
     public Database() {
-        processFile(TBL_CUSTOMER, this::processCustomerData);
-        processFile(TBL_ORDERS, this::processOrderData);
-        processFile(TBL_LINE_ITEM, this::processLineItemChunk);
+        processFile(TBL_CUSTOMER, this::processCustomerTblChunk);
+        processFile(TBL_ORDERS, this::processOrderTblChunk);
+        processFile(TBL_LINE_ITEM, this::processLineItemTblChunk);
         startupExecutor.shutdown();
         try {
             startupExecutor.awaitTermination(5, TimeUnit.SECONDS);
@@ -82,7 +81,7 @@ public class Database {
         }
     }
 
-    private void processCustomerData(byte[] src, int offset, int limit) {
+    private void processCustomerTblChunk(byte[] src, int offset, int limit) {
         for (; offset < limit; offset++) {
             byte b = src[offset];
             if (b == '\n' || offset == 0) {
@@ -103,7 +102,7 @@ public class Database {
         }
     }
 
-    private void processOrderData(byte[] src, int offset, int limit) {
+    private void processOrderTblChunk(byte[] src, int offset, int limit) {
         for (; offset < limit; offset++) {
             byte b = src[offset];
             if (b == '\n' || offset == 0) {
@@ -123,7 +122,7 @@ public class Database {
         }
     }
 
-    private void processLineItemChunk(byte[] src, int offset, int limit) {
+    private void processLineItemTblChunk(byte[] src, int offset, int limit) {
         for (; offset < limit; offset++) {
             byte b = src[offset];
             if (b == '\n' || offset == 0) {
